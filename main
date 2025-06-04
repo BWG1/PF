@@ -1,0 +1,759 @@
+local library = loadstring(game:HttpGet('https://raw.githubusercontent.com/cueshut/saves/main/criminality%20paste%20ui%20library'))()
+---------------------------------------------------------------------------------------------
+local lib = library.new('Glasshook', 'Glasshook')
+local Combat = lib.new_tab('rbxassetid://4483345998')
+local tab = lib.new_tab('rbxassetid://4483345998')
+local playerCombat = Combat.new_section('Weapon Settings')
+local playerVisuals = tab.new_section('Player Visuals')
+local espSector = playerVisuals.new_sector('ESP', 'Left')
+local combatSector = playerCombat.new_sector('Aimbot', 'Left')
+---------------------------------------------------------------------------------------------
+local enemyteam = game.Workspace.Players:GetChildren()[1]
+local friendlyteam = game.Workspace.Players:GetChildren()[2]
+local camera = game:GetService("Workspace").CurrentCamera
+local UIS = game:GetService("UserInputService")
+
+local changedEspTeam = false
+local aimbotActive = false
+local weaponChams = false
+local weaponChamsColor = Color3.fromRGB(122, 175, 223)
+local weaponTransparency = 0.5
+local currentTargetPart = nil
+local currentTargetPlayer = nil
+local activeSnapline = nil
+local rightMouseHeld = false
+local activeCircle = nil
+local childListener = nil
+
+local cachedPart = nil
+
+local deobfuscatedParts = {
+    ["rbxassetid://6179256256"] = "Head",
+    ["rbxassetid://4049240078"] = "Torso",
+    ["rbxassetid://4049240209"] = "Arm",
+    ["rbxassetid://4049240323"] = "Leg",
+}
+
+local partSizes = {
+    ["Head"] = Vector3.new(2, 1, 1),
+    ["Arm"] = Vector3.new(1, 2, 1),
+    ["Leg"] = Vector3.new(1, 2, 1),
+    ["Torso"] = Vector3.new(2, 2, 1),
+}
+
+local activeChams = {}
+local highlights = {}
+
+local espSettings = {
+    Snaplines = false,
+    SnaplinesColor = Color3.fromRGB(255, 0, 0),
+    SnaplinesOrigin = "Center",
+    SnaplinesADS = false,
+    FovCircle = false,
+    FovColor = Color3.fromRGB(255, 0, 0),
+    FovRadius = 30,
+    Highlights = false,
+    Color = Color3.fromRGB(255, 0, 0),
+    FillTransparency = 0.5,
+    OutlineTransparency = 0.5,
+    CornerBoxes = false,
+    CornerBoxColor = Color3.fromRGB(255, 0, 0),
+}
+
+local aim_settings = {
+    aimSpeed = 1,
+    maxMouseMove = 35, --max pixels per frame
+    snapThreshold = 1.5,
+    aimAtHead = true,
+    LockToTarget = false,
+    aimbotToggled = false,
+}
+
+local chamSettings = {
+    color = Color3.fromRGB(122, 175, 223),
+    enabled = false,
+    alwaysontop = false,
+    transparency = 0.5,
+}
+
+game:GetService("UserInputService").InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        rightMouseHeld = true
+    end
+end)
+
+game:GetService("UserInputService").InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        rightMouseHeld = false
+    end
+end)
+
+-------------------------------------ESP BOXES FUNCTIONS--------------------------------------------------
+local espParts = {}
+local MAX_ESP_DISTANCE = 1000
+local cleanupInterval = 0.25
+local lastCleanup = tick()
+
+local function createESPBox(part, teamLabel)
+	for _, tracked in ipairs(espParts) do
+		if tracked.part == part then return end
+	end
+
+	local lines = {}
+	for i = 1, 8 do
+		local line = Drawing.new("Line")
+		line.Thickness = 2
+		line.Color = espSettings.CornerBoxColor
+		line.Visible = false
+		table.insert(lines, line)
+	end
+
+	table.insert(espParts, {
+		part = part,
+		lines = lines,
+        team = teamLabel,
+	})
+end
+
+local function moveAway(point, target, amount)
+	local direction = (point - target)
+	if direction.Magnitude == 0 then return point end
+	return point + direction.Unit * amount
+end
+
+game:GetService("RunService").RenderStepped:Connect(function()
+	local camera = workspace.CurrentCamera
+	local now = tick()
+
+	if now - lastCleanup >= cleanupInterval then
+		for i = #espParts, 1, -1 do
+			if not espParts[i].part or not espParts[i].part:IsDescendantOf(workspace) then
+				for _, line in ipairs(espParts[i].lines) do
+					line:Remove()
+				end
+				table.remove(espParts, i)
+			end
+		end
+		lastCleanup = now
+	end
+
+	for _, esp in ipairs(espParts) do
+		local rootPart = esp.part
+		local lines = esp.lines
+
+		if not rootPart or not rootPart:IsDescendantOf(workspace) then
+			continue
+		end
+
+		local screenPos, onScreen = camera:WorldToViewportPoint(rootPart.Position)
+		local distance = (camera.CFrame.Position - rootPart.Position).Magnitude
+
+		if not onScreen or distance > MAX_ESP_DISTANCE then
+			for _, line in ipairs(lines) do
+				line.Visible = false
+			end
+			continue
+		end
+
+		local topVec = camera:WorldToViewportPoint(rootPart.Position + Vector3.new(0, 2.6, 0))
+		local bottomVec = camera:WorldToViewportPoint(rootPart.Position - Vector3.new(0, 3, 0))
+
+		local boxHeight = math.abs(topVec.Y - bottomVec.Y)
+		local boxWidth = boxHeight * 0.6
+		local center = Vector2.new(screenPos.X, screenPos.Y)
+		local boxSize = Vector2.new(boxWidth, boxHeight)
+
+		local topLeft = moveAway(Vector2.new(center.X - boxWidth/2, center.Y - boxHeight/2), center, 4)
+		local topRight = moveAway(Vector2.new(center.X + boxWidth/2, center.Y - boxHeight/2), center, 4)
+		local bottomLeft = moveAway(Vector2.new(center.X - boxWidth/2, center.Y + boxHeight/2), center, 4)
+		local bottomRight = moveAway(Vector2.new(center.X + boxWidth/2, center.Y + boxHeight/2), center, 4)
+
+		local minSide = math.min(boxWidth, boxHeight)
+		local lineLength = math.clamp(minSide * 0.2, 2, math.max(2, minSide * 0.45))
+		local thickness = math.clamp(boxSize.X / 100, 1, 2)
+
+		lines[1].From = topLeft
+		lines[1].To = topLeft + Vector2.new(lineLength, 0)
+
+		lines[2].From = topLeft
+		lines[2].To = topLeft + Vector2.new(0, lineLength)
+
+		lines[3].From = topRight
+		lines[3].To = topRight - Vector2.new(lineLength, 0)
+
+		lines[4].From = topRight
+		lines[4].To = topRight + Vector2.new(0, lineLength)
+
+		lines[5].From = bottomLeft
+		lines[5].To = bottomLeft + Vector2.new(lineLength, 0)
+
+		lines[6].From = bottomLeft
+		lines[6].To = bottomLeft - Vector2.new(0, lineLength)
+
+		lines[7].From = bottomRight
+		lines[7].To = bottomRight - Vector2.new(lineLength, 0)
+
+		lines[8].From = bottomRight
+		lines[8].To = bottomRight - Vector2.new(0, lineLength)
+
+		for _, line in ipairs(lines) do
+			line.Visible = true
+			line.Thickness = thickness
+			line.Color = espSettings.CornerBoxColor
+		end
+	end
+end)
+
+
+-----------------------------------------------------------------------------------------------------------------------------------------
+
+local function findNearestPartToMouse()
+    local mouseLocation = UIS:GetMouseLocation()
+    local nearestPart
+    local nearestPlayer
+    local minDistance = math.huge
+
+    for _, player in pairs(enemyteam:GetChildren()) do
+        for _, part in pairs(player:GetChildren()) do
+            if part:IsA("BasePart") then
+                local isHeadPart = false
+
+                if aim_settings.aimAtHead then
+                    for _, mesh in pairs(part:GetDescendants()) do
+                        if mesh:IsA("SpecialMesh") and mesh.MeshId == "rbxassetid://6179256256" then
+                            isHeadPart = true
+                            break
+                        end
+                    end
+                end
+
+                if not aim_settings.aimAtHead or isHeadPart then
+                    local screenPoint = camera:WorldToViewportPoint(part.Position)
+                    local distance = (Vector2.new(screenPoint.X, screenPoint.Y) - mouseLocation).Magnitude
+                    if distance < minDistance then
+                        nearestPart = part
+                        nearestPlayer = player
+                        minDistance = distance
+                    end
+                end
+            end
+        end
+    end
+
+    return nearestPart, nearestPlayer
+end
+
+local function drawFOVCircle()
+    local camera = game:GetService("Workspace").CurrentCamera
+    local viewportSize = camera.ViewportSize
+    local screenCenter = Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
+
+    local circle = Drawing.new("Circle")
+    circle.NumSides = 40
+    circle.Radius = espSettings.FovRadius
+    circle.Position = screenCenter
+    circle.Thickness = 2
+    circle.Filled = false
+    circle.Color = espSettings.FovColor
+    circle.Visible = true
+    activeCircle = circle
+end
+
+game:GetService("RunService").RenderStepped:Connect(function()
+    if espSettings.Highlights then
+        for _, player in pairs(enemyteam:GetChildren()) do
+            if not player:FindFirstChild("Highlight") then
+                
+                local highlight = Instance.new("Highlight")
+                highlight.FillColor = espSettings.Color
+                highlight.OutlineColor = espSettings.Color
+                
+                highlight.OutlineTransparency = espSettings.OutlineTransparency
+                highlight.FillTransparency = espSettings.FillTransparency
+
+                highlight.Parent = player
+                table.insert(highlights, highlight)
+            end
+        end
+    end
+
+    if espSettings.Snaplines then
+        local camera = game:GetService("Workspace").CurrentCamera
+        local viewportSize = camera.ViewportSize
+        local screenCenter = Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
+        local targetPart, _ = findNearestPartToMouse()
+
+        if targetPart then
+            cachedPart = targetPart
+        end
+
+        if cachedPart and cachedPart:IsDescendantOf(game:GetService("Workspace")) then
+            local screenPos, onScreen = camera:WorldToViewportPoint(cachedPart.Position)
+            if onScreen and screenPos.Z > 0.01 then
+                
+                if espSettings.SnaplinesOrigin == "Center" then
+                    activeSnapline.From = screenCenter
+                else
+                    activeSnapline.From = Vector2.new(viewportSize.X / 2, viewportSize.Y)
+                end
+
+                activeSnapline.To = Vector2.new(screenPos.X, screenPos.Y)
+
+                if espSettings.SnaplinesADS then
+
+                    if rightMouseHeld then
+                        activeSnapline.Visible = true
+                    else
+                        activeSnapline.Visible = false
+                    end
+                else
+                    activeSnapline.Visible = true
+                end
+
+                activeSnapline.Color = espSettings.SnaplinesColor
+            else
+                activeSnapline.Visible = false
+            end
+        else
+            activeSnapline.Visible = false
+        end
+    end
+end)
+
+local function findModelFromTargetPart()
+    if not currentTargetPart then
+        return false
+    end
+
+    if currentTargetPart and currentTargetPart.Parent:IsA("Folder") and currentTargetPart:IsA("BasePart") then
+        return currentTargetPart.Parent.Parent
+    elseif currentTargetPart:IsA("BasePart") then
+        return currentTargetPart.Parent
+    end
+end
+
+local function findHead(model)
+    if not model:IsA("Model") then
+        return false
+    end
+    local head = nil
+    local folder = model:FindFirstChildOfClass("Folder")
+
+    for _, mesh in pairs(folder:GetChildren()) do
+
+        if mesh:IsA("MeshPart") and mesh.MeshId == "rbxassetid://6178916430" then
+            head = mesh
+            break
+        end
+    end
+
+    return head
+end
+
+local function createBoxHandleAdornment(part, color, alwaysOnTop)
+    local chams
+
+    local truePartName = deobfuscatedParts[part:FindFirstChildOfClass("SpecialMesh").MeshId]
+    local partSize = partSizes[truePartName]
+
+    if truePartName == "Head" then
+        chams = Instance.new("CylinderHandleAdornment")
+        chams.Height = 1.15
+        chams.CFrame = CFrame.Angles(math.rad(90), 0, 0)
+        chams.Radius = 0.6
+    else
+        chams = Instance.new("BoxHandleAdornment")
+        chams.Size = partSize
+    end
+
+    chams.ZIndex = 10
+    chams.Transparency = chamSettings.transparency
+    chams.AlwaysOnTop = alwaysOnTop
+    chams.Adornee = part
+    chams.Color3 = color
+    chams.Name = "Chams"
+    chams.Parent = part
+
+    table.insert(activeChams, chams)
+end
+
+local function destroyChams()
+    for _, cham in pairs(activeChams) do
+        cham:Destroy()
+    end
+end
+
+local function applyChams()
+    while true do
+        wait()
+
+        if chamSettings.enabled then
+
+            for _, child in pairs(enemyteam:GetChildren()) do
+               
+                if child then
+                    
+                    for _, obj in pairs(child:GetChildren()) do
+
+                        if not obj:FindFirstChild("Chams") and obj:IsA("BasePart") then
+
+                            createBoxHandleAdornment(obj, chamSettings.color, chamSettings.alwaysontop)
+                        end
+                    end
+                end
+            end
+        else
+            destroyChams()
+        end
+    end
+end
+
+coroutine.wrap(applyChams)()
+
+local function applyWeaponChams()
+    while true do
+        wait(0.2)
+
+        if weaponChams then
+            for _, part in pairs(game.Workspace.Camera:GetDescendants()) do
+                if part:IsA("UnionOperation") or part:IsA("MeshPart") or part:IsA("Part") or part:IsA("Decal") then
+                    if part.Transparency ~= 1 and part.Name ~= "Arm" and not part:FindFirstChild("Arm") and part.Parent.Name ~= "Arm" then
+                        if part:IsA("Texture") then
+                            continue
+                        end
+                        
+                        if part:IsA("Decal") then
+                            part.Transparency = weaponTransparency / 10
+                            part.Color3 = weaponChamsColor
+                            continue
+                        end
+
+                        part.Material = Enum.Material.ForceField
+                        part.Transparency = weaponTransparency / 10
+                        part.Color = weaponChamsColor
+                    end
+                end
+            end
+        end
+    end
+end
+
+coroutine.wrap(applyWeaponChams)()
+
+local function calculateMouseDelta(targetPosition)
+    local screenPoint = camera:WorldToViewportPoint(targetPosition)
+    local mouseLocation = UIS:GetMouseLocation()
+    local delta = Vector2.new(screenPoint.X - mouseLocation.X, screenPoint.Y - mouseLocation.Y)
+
+    local scaledAimSpeed = aim_settings.aimSpeed / 20
+    delta = delta * scaledAimSpeed
+
+    if delta.Magnitude < aim_settings.snapThreshold then
+        delta = Vector2.zero
+    end
+
+    if aim_settings.maxMouseMove > 0 and delta.Magnitude > aim_settings.maxMouseMove then
+        delta = delta.Unit * aim_settings.maxMouseMove
+    end
+
+    return delta
+end
+
+local function isTargetInFOV(targetPosition)
+    local cam = game:GetService("Workspace").CurrentCamera
+    local screenPoint, onScreen = cam:WorldToViewportPoint(targetPosition)
+    if not onScreen then return false end
+
+    local screenCenter = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+    local targetScreenPos = Vector2.new(screenPoint.X, screenPoint.Y)
+
+    local distance = (targetScreenPos - screenCenter).Magnitude
+    return distance <= activeCircle.Radius
+end
+
+
+local function updateCameraAim()
+    if not aim_settings.LockToTarget then
+        currentTargetPart, currentTargetPlayer = findNearestPartToMouse()
+    end
+
+    if currentTargetPart and isTargetInFOV(currentTargetPart.Position) then
+
+        local aimDirection = currentTargetPart.Position
+        local mouseDelta = calculateMouseDelta(aimDirection)
+
+        UIS.MouseDeltaSensitivity = 1
+        mousemoverel(mouseDelta.x, mouseDelta.y)
+    end
+end
+
+local function destroyHighlights()
+    for _, h in pairs(highlights) do
+        if not h then continue end
+
+        h:Destroy()
+    end
+end
+
+local function addBoxesToPlayers()
+    for _, player in pairs(enemyteam:GetChildren()) do
+
+        for _, part in pairs(player:GetChildren()) do
+
+            if not part:IsA("BasePart") or not part:FindFirstChildOfClass("SpecialMesh") then continue end
+
+            local deobfuscatedPartName = deobfuscatedParts[part:FindFirstChildOfClass("SpecialMesh").MeshId]
+
+            if deobfuscatedPartName == "Torso" then
+                createESPBox(part)
+            end
+        end
+    end
+end
+
+local function safeDisconnect(conn)
+	if conn then
+		conn:Disconnect()
+	end
+end
+
+local function isValidTorso(part)
+	if not part:IsA("BasePart") then return false end
+	local mesh = part:FindFirstChildOfClass("SpecialMesh")
+	if not mesh then return false end
+
+	local name = deobfuscatedParts[mesh.MeshId]
+	return name == "Torso"
+end
+
+local function setupESPListener(teamModel)
+	return teamModel.DescendantAdded:Connect(function(descendant)
+		if not espSettings.CornerBoxes then return end
+		if isValidTorso(descendant) then
+			createESPBox(descendant)
+		end
+	end)
+end
+
+local function createEnemyListener()
+    if childListener then
+        childListener:Disconnect()
+        childListener = nil
+    end
+    
+    childListener = enemyteam.ChildAdded:Connect(function(child)
+        if not espSettings.CornerBoxes then return end
+        
+        for _, part in ipairs(child:GetChildren()) do
+            if not part:IsA("BasePart") then continue end
+            local mesh = part:FindFirstChildOfClass("SpecialMesh")
+            if not mesh then continue end
+            
+            local deobfuscatedPartName = deobfuscatedParts[mesh.MeshId]
+            if deobfuscatedPartName == "Torso" then
+                createESPBox(part)
+            end
+        end
+    end)
+end
+
+createEnemyListener()
+
+game:GetService("UserInputService").InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        aimbotActive = true
+        currentTargetPart, currentTargetPlayer = findNearestPartToMouse()
+    end
+end)
+
+game:GetService("UserInputService").InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        aimbotActive = false
+        currentTargetPart, currentTargetPlayer = nil, nil
+    end
+end)
+
+game:GetService("RunService").Heartbeat:Connect(function()
+    if aimbotActive and aim_settings.aimbotToggled then
+        updateCameraAim()
+    end
+end)
+
+local function destroyCornerBoxes(teamLabel)
+	for i = #espParts, 1, -1 do
+		local esp = espParts[i]
+		if esp.team == teamLabel then
+			for _, line in ipairs(esp.lines) do
+				if typeof(line) == "userdata" and line.Remove then
+					line:Remove()
+				end
+			end
+			table.remove(espParts, i)
+		end
+	end
+end
+
+-------------------Library Functions--------------------------------------------
+local changeTeams = espSector.element('Button', 'Change Team Variable', false, function()
+    changedEspTeam = not changedEspTeam
+    
+    enemyteam, friendlyteam = friendlyteam, enemyteam
+    
+    destroyChams()
+    destroyCornerBoxes()
+    createEnemyListener()
+    addBoxesToPlayers() 
+end)
+
+
+local boxesToggle = espSector.element('Toggle', 'Corner Boxes', false, function(v)
+    espSettings.CornerBoxes = not espSettings.CornerBoxes
+
+    if espSettings.CornerBoxes then
+        addBoxesToPlayers()
+    else
+        destroyCornerBoxes(enemyteam)
+    end
+end)
+
+boxesToggle:add_color({Color = Color3.fromRGB(255, 0, 0)}, Color3.fromRGB(255, 0, 0), function(v)
+    espSettings.CornerBoxColor = v.Color
+end)
+
+local highlightESP = espSector.element('Toggle', 'Highlight ESP', false, function(v)
+    espSettings.Highlights = not espSettings.Highlights
+    destroyHighlights()
+end)
+
+highlightESP:add_color({Color = Color3.fromRGB(255, 0, 0)}, Color3.fromRGB(255, 0, 0), function(v)
+    espSettings.Color = v.Color
+    destroyHighlights()
+end)
+
+local highlightTransparency = espSector.element('Slider', 'Highlight Fill Transparency', {default = {min = 0, max = 10, default = 5}}, function(v)
+    espSettings.FillTransparency = v.Slider / 10
+    destroyHighlights()
+end)
+
+local highlightTransparency2 = espSector.element('Slider', 'Highlight Outline Transparency', {default = {min = 0, max = 10, default = 5}}, function(v)
+    espSettings.OutlineTransparency = v.Slider / 10
+    destroyHighlights()
+end)
+
+local chamsToggle = espSector.element('Toggle', 'Chams', false, function(v)
+    chamSettings.enabled = not chamSettings.enabled
+end)
+
+local chamsVisToggle = espSector.element('Toggle', 'Chams AlwaysOnTop', false, function(v)
+    chamSettings.alwaysontop = not chamSettings.alwaysontop
+    destroyChams()
+end)
+
+local chamsTransparency = espSector.element('Slider', 'Chams Transparency', {default = {min = 0, max = 10, default = 5}}, function(v)
+    chamSettings.transparency = v.Slider / 10
+end)
+
+local snaplinesToggle = espSector.element('Toggle', 'Snaplines', false, function(v)
+    espSettings.Snaplines = not espSettings.Snaplines
+
+    if not espSettings.Snaplines and activeSnapline then
+        activeSnapline:Destroy()
+    else
+        local targetLine = Drawing.new("Line")
+        targetLine.Thickness = 3.5
+        targetLine.Color = Color3.fromRGB(255, 0, 0)
+        targetLine.Transparency = 1
+        targetLine.ZIndex = 2
+        targetLine.Visible = true
+        activeSnapline = targetLine
+    end
+end)
+
+local snaplinesAimingToggle = espSector.element('Toggle', 'Only Visible When ADS', false, function(v)
+    espSettings.SnaplinesADS = not espSettings.SnaplinesADS
+end)
+
+snaplinesToggle:add_color({Color = Color3.fromRGB(255, 0, 0)}, Color3.fromRGB(255, 0, 0), function(v)
+    espSettings.SnaplinesColor = v.Color
+end)
+
+local fovCircleToggle = combatSector.element('Toggle', 'FOV Circle', false, function(v)
+    espSettings.FovCircle = not espSettings.FovCircle
+
+    if espSettings.FovCircle then
+        drawFOVCircle()
+    elseif activeCircle then
+        activeCircle:Destroy()
+    end
+end)
+
+fovCircleToggle:add_color({Color = Color3.fromRGB(84, 101, 255)}, Color3.fromRGB(84, 101, 255), function(v)
+    espSettings.FovColor = v.Color
+    
+    if activeCircle then
+        activeCircle:Destroy()
+        drawFOVCircle()
+    end
+end)
+
+local fovSlider = combatSector.element('Slider', 'FOV Radius', {default = {min = 1, max = 180, default = 30}}, function(v)
+    espSettings.FovRadius = v.Slider
+
+    if activeCircle then
+        activeCircle:Destroy()
+        drawFOVCircle()
+    end
+end)
+
+espSector.element("Dropdown", "Snapline Origin", {options = {"Center", "Bottom"}}, function(value)
+    espSettings.SnaplinesOrigin = value.Dropdown
+end)
+
+chamsToggle:add_color({Color = Color3.fromRGB(84, 101, 255)}, Color3.fromRGB(84, 101, 255), function(v)
+    chamSettings.color = v.Color
+    destroyChams()
+end)
+
+local weaponChamsToggle = espSector.element('Toggle', 'Weapon/Hand Chams', false, function(v)
+    weaponChams = not weaponChams
+end)
+
+local weaponChamsTransparency = espSector.element('Slider', 'Weapon Transparency', {default = {min = 1, max = 10, default = 5}}, function(v)
+    weaponTransparency = v.Slider
+end)
+
+weaponChamsToggle:add_color({Color = Color3.fromRGB(122, 175, 223)}, Color3.fromRGB(122, 175, 223), function(v)
+    weaponChamsColor = v.Color
+end)
+
+-------------------------------------------------------------------------------
+local changeTeams = combatSector.element('Button', 'Change Team Variable', false, function()
+    changedEspTeam = not changedEspTeam
+    
+    enemyteam, friendlyteam = friendlyteam, enemyteam
+    
+    destroyChams()
+    destroyCornerBoxes()
+    createEnemyListener()
+    addBoxesToPlayers()
+end)
+
+local aimbotToggle = combatSector.element('Toggle', 'Aimbot', false, function(v)
+    aim_settings.aimbotToggled = v.Toggle
+end)
+
+local targetLock = combatSector.element('Toggle', 'Lock To Target', false, function(v)
+    aim_settings.LockToTarget = not aim_settings.LockToTarget
+end)
+
+local aimSmoothness = combatSector.element('Slider', 'Aimbot Speed', {default = {min = 1, max = 100, default = 10}}, function(v)
+    aim_settings.aimSpeed = v.Slider / 10
+end)
+
+local aimbotTargets = combatSector.element('Dropdown', 'Aimbot Target', {options = {'Head', 'Closest to Mouse'}}, function(v)
+    if v.Dropdown == "Head" then
+        aim_settings.aimAtHead = true
+    elseif v.Dropdown == "Closest to Mouse" then
+        aim_settings.aimAtHead = false
+    end
+end)
